@@ -24,11 +24,16 @@ carries a whole mixture. The catalogue holds 44 oil paints with their pigment
 indices, opacity and relative strength.
 
 **Choosing the palette.** Matching each colour on its own gives eleven tubes for
-seven colours — a colour picker, not a palette. Instead the tubes are chosen once
-for the whole picture, greedily, by the drop in canvas-weighted error each one
-buys, stopping short of the limit when another would not earn its place. Every
-colour is then mixed from that one set, and each swatch shows the photo colour
-against the mix so you can see what the limit costs.
+seven colours — a colour picker, not a palette. So you pick a palette first and
+every colour is mixed from it: the **Zorn** four, **the Rembrandt** earths, a
+**three-colour primary** triad, a **limited warm** or **limited cool** set, the
+**full** rack, or one worked out **for this photo** — chosen greedily, by the
+drop in canvas-weighted error each tube buys, and stopping when another would
+not earn its place.
+
+Every swatch shows the photo colour against the mix, so the cost of the choice
+is visible: the Zorn palette is uncanny on flesh and cannot reach a blue sky,
+and the primary triad does the opposite.
 
 ## Running it
 

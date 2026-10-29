@@ -7,8 +7,23 @@ import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
@@ -34,6 +49,13 @@ import {
 } from "@/lib/extract"
 import { choosePalette, describeParts, solve, type Recipe } from "@/lib/mix"
 import { FAMILY_ORDER, type Paint } from "@/lib/paints"
+import {
+  PALETTE_BY_ID,
+  PALETTE_LABELS,
+  PALETTE_OPTIONS,
+  paintsOf,
+  type PaletteId,
+} from "@/lib/palettes"
 
 type Grouping = "value" | "temperature"
 type Loaded = { id: number; src: string; width: number; height: number; label: string }
@@ -48,7 +70,7 @@ export function PaintersPalette() {
   const [image, setImage] = React.useState<Loaded | null>(null)
   const [count, setCount] = React.useState(7)
   const [maxPaints, setMaxPaints] = React.useState(3)
-  const [paletteSize, setPaletteSize] = React.useState(8)
+  const [paletteId, setPaletteId] = React.useState<PaletteId>("auto")
   const [grouping, setGrouping] = React.useState<Grouping>("value")
   const [allowWhite, setAllowWhite] = React.useState(true)
   const [allowBlack, setAllowBlack] = React.useState(false)
@@ -133,20 +155,21 @@ export function PaintersPalette() {
     }
   }, [image, count, key])
 
-  // Choose the tubes once for the whole picture, then mix every colour from
-  // that set. Solving each colour on its own gives a better match and a palette
-  // nobody would lay out.
-  const palette = React.useMemo(
-    () =>
-      paletteSize > 0 && swatches.length
-        ? choosePalette(
-            swatches.map((s) => s.lab),
-            swatches.map((s) => s.share),
-            { size: paletteSize, allowWhite, allowBlack },
-          )
-        : undefined,
-    [swatches, paletteSize, allowWhite, allowBlack],
-  )
+  const preset = PALETTE_BY_ID.get(paletteId)!
+  // A named palette fixes its own tubes. "Full" fixes none and matches each
+  // colour on its own. Everything else is worked out from the photo: the tubes
+  // that each buy the largest drop in error across the whole picture.
+  const palette = React.useMemo(() => {
+    if (paletteId === "full") return undefined
+    const fixed = paintsOf(paletteId)
+    if (fixed) return fixed
+    if (!swatches.length) return undefined
+    return choosePalette(
+      swatches.map((s) => s.lab),
+      swatches.map((s) => s.share),
+      { size: 8, allowWhite, allowBlack },
+    )
+  }, [paletteId, swatches, allowWhite, allowBlack])
 
   const recipes = React.useMemo(() => {
     const map = new Map<number, Recipe>()
@@ -157,21 +180,21 @@ export function PaintersPalette() {
   }, [swatches, maxPaints, allowWhite, allowBlack, palette])
 
   const tubes = React.useMemo(() => {
-    const used = new Map<string, { paint: Paint; weight: number; uses: number }>()
+    const used = new Map<string, { paint: Paint; weight: number }>()
     for (const s of swatches) {
       const recipe = recipes.get(s.id)
       if (!recipe) continue
       for (const c of recipe.components) {
         const hit = used.get(c.paint.name)
-        if (hit) {
-          hit.weight += c.volume * s.share
-          hit.uses++
-        } else {
-          used.set(c.paint.name, { paint: c.paint, weight: c.volume * s.share, uses: 1 })
-        }
+        if (hit) hit.weight += c.volume * s.share
+        else used.set(c.paint.name, { paint: c.paint, weight: c.volume * s.share })
       }
     }
-    const list = Array.from(used.values())
+    // A tube you squeezed out and did not reach for is still on the palette, so
+    // a fixed set lists all of them — the empty bar is the useful part.
+    const list = palette
+      ? palette.map((paint) => ({ paint, weight: used.get(paint.name)?.weight ?? 0 }))
+      : Array.from(used.values())
     const peak = Math.max(...list.map((t) => t.weight), 1e-6)
     return list
       .map((t) => ({ ...t, intensity: t.weight / peak }))
@@ -180,7 +203,7 @@ export function PaintersPalette() {
           FAMILY_ORDER.indexOf(a.paint.family) - FAMILY_ORDER.indexOf(b.paint.family) ||
           b.weight - a.weight,
       )
-  }, [swatches, recipes])
+  }, [swatches, recipes, palette])
 
   const groups = React.useMemo(() => {
     const defs =
@@ -292,8 +315,8 @@ export function PaintersPalette() {
               found={swatches.length}
               count={count}
               setCount={setCount}
-              paletteSize={paletteSize}
-              setPaletteSize={setPaletteSize}
+              fixedPalette={preset.paints !== undefined}
+              paletteName={preset.name}
               maxPaints={maxPaints}
               setMaxPaints={setMaxPaints}
               grouping={grouping}
@@ -312,19 +335,41 @@ export function PaintersPalette() {
                   <Palette className="size-4 text-muted-foreground" />
                   On the palette
                 </CardTitle>
-                <CardDescription>
-                  {tubes.length === 1 ? "One tube mixes" : `${tubes.length} tubes mix`} every colour
-                  below. The bar is how much of the picture each one ends up carrying.
-                </CardDescription>
+                <CardAction>
+                  <Select
+                    items={PALETTE_LABELS}
+                    value={paletteId}
+                    onValueChange={(v) => setPaletteId(v as PaletteId)}
+                  >
+                    <SelectTrigger aria-label="Palette">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PALETTE_OPTIONS.map((option) => (
+                        <SelectItem key={option.id} value={option.id}>
+                          {option.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </CardAction>
+                <CardDescription>{preset.note}</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
                 {tubes.map((t) => (
-                  <div key={t.paint.name} className="space-y-1.5">
+                  <div
+                    key={t.paint.name}
+                    className={cn("space-y-1.5", t.weight === 0 && "opacity-45")}
+                  >
                     <div className="flex items-baseline gap-2">
-                      <PaintGlob hex={t.paint.hex} name={t.paint.name} className="size-5 translate-y-1" />
+                      <PaintGlob
+                        hex={t.paint.hex}
+                        name={t.paint.name}
+                        className="size-5 translate-y-1"
+                      />
                       <span className="truncate text-sm font-medium">{t.paint.name}</span>
                       <span className="ml-auto font-mono text-[11px] text-muted-foreground">
-                        {t.paint.pigment}
+                        {t.weight === 0 ? "unused" : t.paint.pigment}
                       </span>
                     </div>
                     <div className="h-1 overflow-hidden rounded-full bg-muted">
@@ -332,13 +377,19 @@ export function PaintersPalette() {
                         className="h-full rounded-full"
                         style={{ background: t.paint.hex }}
                         initial={{ width: 0 }}
-                        animate={{ width: `${Math.max(4, t.intensity * 100)}%` }}
+                        animate={{ width: `${t.intensity * 100}%` }}
                         transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
                       />
                     </div>
                   </div>
                 ))}
               </CardContent>
+              <CardFooter>
+                <p className="text-xs text-muted-foreground">
+                  {tubes.length === 1 ? "One tube" : `${tubes.length} tubes`}. The bar is how much of
+                  the picture each one ends up carrying.
+                </p>
+              </CardFooter>
             </Card>
 
             {reading ? (
@@ -487,8 +538,8 @@ function Controls(props: {
   found: number
   count: number
   setCount: (n: number) => void
-  paletteSize: number
-  setPaletteSize: (n: number) => void
+  fixedPalette: boolean
+  paletteName: string
   maxPaints: number
   setMaxPaints: (n: number) => void
   grouping: Grouping
@@ -522,29 +573,6 @@ function Controls(props: {
             {props.found > 0 && props.found < props.count
               ? `This photo only holds ${props.found} colours you could tell apart, so the rest were folded in.`
               : "Fewer groups force bigger decisions. Six or seven is a normal day's palette."}
-          </p>
-        </div>
-
-        <Separator />
-
-        <div className="space-y-2.5">
-          <Label>Palette limit</Label>
-          <ToggleGroup
-            variant="outline"
-            spacing={0}
-            value={[String(props.paletteSize)]}
-            onValueChange={(v) => v[0] && props.setPaletteSize(Number(v[0]))}
-          >
-            {[6, 8, 12, 0].map((n) => (
-              <ToggleGroupItem key={n} value={String(n)}>
-                {n === 0 ? "No limit" : n}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-          <p className="text-xs text-muted-foreground">
-            Every colour gets mixed from one shared set, and it stops short of the limit when
-            another tube would not earn its place. No limit matches each colour on its own, which is
-            closer and a much longer shopping list.
           </p>
         </div>
 
@@ -586,12 +614,17 @@ function Controls(props: {
 
         <Separator />
 
-        <div className="space-y-3">
+        <div className={cn("space-y-3", props.fixedPalette && "opacity-50")}>
           <div className="flex items-center justify-between gap-4">
             <Label htmlFor="white" className="font-normal">
               Tint with Titanium White
             </Label>
-            <Switch id="white" checked={props.allowWhite} onCheckedChange={props.setAllowWhite} />
+            <Switch
+              id="white"
+              checked={props.allowWhite}
+              onCheckedChange={props.setAllowWhite}
+              disabled={props.fixedPalette}
+            />
           </div>
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -599,10 +632,17 @@ function Controls(props: {
                 Allow blacks and greys
               </Label>
               <p className="text-xs text-muted-foreground">
-                Off by default — darks mixed from colour stay alive.
+                {props.fixedPalette
+                  ? `${props.paletteName} brings its own tubes.`
+                  : "Off by default — darks mixed from colour stay alive."}
               </p>
             </div>
-            <Switch id="black" checked={props.allowBlack} onCheckedChange={props.setAllowBlack} />
+            <Switch
+              id="black"
+              checked={props.allowBlack}
+              onCheckedChange={props.setAllowBlack}
+              disabled={props.fixedPalette}
+            />
           </div>
         </div>
       </CardContent>
