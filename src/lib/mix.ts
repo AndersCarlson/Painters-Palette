@@ -334,15 +334,6 @@ export function choosePalette(
   return palette
 }
 
-export type MatchQuality = "spot on" | "very close" | "close" | "in the neighbourhood"
-
-export function quality(d: number): MatchQuality {
-  if (d < 0.015) return "spot on"
-  if (d < 0.035) return "very close"
-  if (d < 0.07) return "close"
-  return "in the neighbourhood"
-}
-
 export function describeParts(c: Component): string {
   if (c.touch) return "a touch"
   return c.parts % 1 === 0 ? String(c.parts) : c.parts.toFixed(1)

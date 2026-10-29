@@ -3,18 +3,10 @@
 import * as React from "react"
 import { motion } from "motion/react"
 
-import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { describeParts, quality, type Recipe } from "@/lib/mix"
+import { describeParts, type Recipe } from "@/lib/mix"
 import { temperature, type Swatch } from "@/lib/extract"
-
-const QUALITY_TONE: Record<string, string> = {
-  "spot on": "text-emerald-600 dark:text-emerald-400",
-  "very close": "text-emerald-600 dark:text-emerald-400",
-  close: "text-amber-600 dark:text-amber-400",
-  "in the neighbourhood": "text-muted-foreground",
-}
 
 /**
  * Silhouettes for a dab of paint: closed smooth curves through radially
@@ -99,7 +91,6 @@ export function SwatchCard({
   active: boolean
   onActivate: (id: number | null) => void
 }) {
-  const q = quality(recipe.deltaE)
   // "White 1 + a touch + a touch" reads as equal parts when it is nothing of
   // the kind, so when only one component carries a number, call it the base.
   const lone = recipe.components.filter((c) => !c.touch).length === 1
@@ -146,9 +137,6 @@ export function SwatchCard({
           </span>
           <Separatorish />
           <span className="text-xs text-muted-foreground capitalize">{temperature(swatch.lab)}</span>
-          <Badge variant="outline" className={cn("ml-auto gap-1 text-[11px]", QUALITY_TONE[q])}>
-            {q}
-          </Badge>
         </div>
 
         <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">

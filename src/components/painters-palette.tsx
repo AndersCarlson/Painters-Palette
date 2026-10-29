@@ -181,15 +181,14 @@ export function PaintersPalette() {
     const list = palette
       ? palette.map((paint) => ({ paint, weight: used.get(paint.name)?.weight ?? 0 }))
       : Array.from(used.values())
-    const peak = Math.max(...list.map((t) => t.weight), 1e-6)
-    return list
-      .map((t) => ({ ...t, intensity: t.weight / peak }))
-      .sort(
-        (a, b) =>
-          FAMILY_ORDER.indexOf(a.paint.family) - FAMILY_ORDER.indexOf(b.paint.family) ||
-          b.weight - a.weight,
-      )
+    return list.sort(
+      (a, b) =>
+        FAMILY_ORDER.indexOf(a.paint.family) - FAMILY_ORDER.indexOf(b.paint.family) ||
+        b.weight - a.weight,
+    )
   }, [swatches, recipes, palette])
+
+  const unusedCount = tubes.filter((t) => t.weight === 0).length
 
   const groups = React.useMemo(() => {
     const defs =
@@ -341,39 +340,33 @@ export function PaintersPalette() {
                 </div>
                 <CardDescription>{preset.note}</CardDescription>
               </CardHeader>
-              <CardContent className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+              <CardContent className="flex flex-wrap gap-x-4 gap-y-5">
                 {tubes.map((t) => (
-                  <div
+                  <motion.div
                     key={t.paint.name}
-                    className={cn("space-y-1.5", t.weight === 0 && "opacity-45")}
+                    initial={{ opacity: 0, scale: 0.85 }}
+                    animate={{ opacity: t.weight === 0 ? 0.4 : 1, scale: 1 }}
+                    transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                    className="flex w-24 flex-col items-center gap-2 text-center"
                   >
-                    <div className="flex items-baseline gap-2">
-                      <PaintGlob
-                        hex={t.paint.hex}
-                        name={t.paint.name}
-                        className="size-5 translate-y-1"
-                      />
-                      <span className="truncate text-sm font-medium">{t.paint.name}</span>
-                      <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+                    <PaintGlob hex={t.paint.hex} name={t.paint.name} className="size-12" />
+                    <div className="space-y-0.5">
+                      {/* Two lines reserved, so a one-line name and a wrapped
+                          one still line their pigment codes up with each other. */}
+                      <div className="min-h-[2.5em] text-xs leading-tight font-medium">
+                        {t.paint.name}
+                      </div>
+                      <div className="font-mono text-[10px] text-muted-foreground">
                         {t.weight === 0 ? "unused" : t.paint.pigment}
-                      </span>
+                      </div>
                     </div>
-                    <div className="h-1 overflow-hidden rounded-full bg-muted">
-                      <motion.div
-                        className="h-full rounded-full"
-                        style={{ background: t.paint.hex }}
-                        initial={{ width: 0 }}
-                        animate={{ width: `${t.intensity * 100}%` }}
-                        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-                      />
-                    </div>
-                  </div>
+                  </motion.div>
                 ))}
               </CardContent>
               <CardFooter>
                 <p className="text-xs text-muted-foreground">
-                  {tubes.length === 1 ? "One tube" : `${tubes.length} tubes`}. The bar is how much of
-                  the picture each one ends up carrying.
+                  {tubes.length === 1 ? "One tube" : `${tubes.length} tubes`}
+                  {unusedCount > 0 && `, ${unusedCount} of them untouched by this picture`}.
                 </p>
               </CardFooter>
             </Card>
