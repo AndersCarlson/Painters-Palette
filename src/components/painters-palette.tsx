@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { motion } from "motion/react"
-import { Copy, ImageUp, Palette, RotateCcw, Sparkles } from "lucide-react"
+import { Copy, ImageUp, Images, Palette, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
@@ -15,8 +15,15 @@ import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { PaintChip, SwatchCard } from "@/components/swatch-card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
-import { drawDemoScene } from "@/lib/demo-scene"
+import { SAMPLES, type Sample } from "@/lib/samples"
 import {
   TEMPERATURES,
   VALUE_BANDS,
@@ -47,6 +54,7 @@ export function PaintersPalette() {
   const [allowBlack, setAllowBlack] = React.useState(false)
   const [analysis, setAnalysis] = React.useState<{ key: string; swatches: Swatch[] } | null>(null)
   const [active, setActive] = React.useState<number | null>(null)
+  const [picking, setPicking] = React.useState(false)
   const fileInput = React.useRef<HTMLInputElement>(null)
 
   const load = React.useCallback((src: string, label: string) => {
@@ -77,9 +85,13 @@ export function PaintersPalette() {
     [load],
   )
 
-  const loadDemo = React.useCallback(() => {
-    load(drawDemoScene().toDataURL("image/jpeg", 0.92), "Demo scene")
-  }, [load])
+  const takeSample = React.useCallback(
+    (choice: Sample) => {
+      setPicking(false)
+      load(choice.src, choice.label)
+    },
+    [load],
+  )
 
   React.useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -217,8 +229,14 @@ export function PaintersPalette() {
         onChange={(e) => takeFile(e.target.files?.[0])}
       />
 
+      <SamplePicker open={picking} onOpenChange={setPicking} onChoose={takeSample} />
+
       {!image ? (
-        <Dropzone onPick={() => fileInput.current?.click()} onDrop={takeFile} onDemo={loadDemo} />
+        <Dropzone
+          onPick={() => fileInput.current?.click()}
+          onDrop={takeFile}
+          onBrowseSamples={() => setPicking(true)}
+        />
       ) : (
         <div className="grid gap-6 lg:grid-cols-12">
           {/* The reference stays in view while the recipes are read beside it, so
@@ -259,6 +277,9 @@ export function PaintersPalette() {
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => fileInput.current?.click()}>
                     <ImageUp /> Another photo
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setPicking(true)}>
+                    <Images /> Sample photos
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => setImage(null)}>
                     <RotateCcw /> Start over
@@ -370,11 +391,11 @@ export function PaintersPalette() {
 function Dropzone({
   onPick,
   onDrop,
-  onDemo,
+  onBrowseSamples,
 }: {
   onPick: () => void
   onDrop: (file: File | undefined) => void
-  onDemo: () => void
+  onBrowseSamples: () => void
 }) {
   const [over, setOver] = React.useState(false)
 
@@ -409,11 +430,56 @@ function Dropzone({
         <Button onClick={onPick}>
           <ImageUp /> Choose a photo
         </Button>
-        <Button variant="outline" onClick={onDemo}>
-          <Sparkles /> Try a demo scene
+        <Button variant="outline" onClick={onBrowseSamples}>
+          <Images /> Try a sample photo
         </Button>
       </div>
     </div>
+  )
+}
+
+function SamplePicker({
+  open,
+  onOpenChange,
+  onChoose,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onChoose: (choice: Sample) => void
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Pick a photo</DialogTitle>
+          <DialogDescription>
+            Each one puts a different problem in front of you.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {SAMPLES.map((choice) => (
+            <button
+              key={choice.slug}
+              type="button"
+              onClick={() => onChoose(choice)}
+              className="group overflow-hidden rounded-lg border text-left transition-colors hover:border-ring focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={choice.thumb}
+                alt={choice.label}
+                loading="lazy"
+                className="aspect-4/3 w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+              />
+              <span className="block px-2.5 py-2">
+                <span className="block text-sm font-medium">{choice.label}</span>
+                <span className="block text-xs text-muted-foreground">{choice.note}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 

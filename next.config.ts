@@ -9,6 +9,8 @@ const nextConfig: NextConfig = {
   // The whole tool runs in the browser, so it ships as static files.
   output: "export",
   basePath,
+  // Same prefix, readable from the client, for URLs the app builds itself.
+  env: { NEXT_PUBLIC_BASE_PATH: basePath },
   images: {
     // No image optimiser exists behind a static export.
     unoptimized: true,
