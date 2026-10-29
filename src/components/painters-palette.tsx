@@ -14,7 +14,7 @@ import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { PaintChip, SwatchCard } from "@/components/swatch-card"
+import { PaintGlob, SwatchCard } from "@/components/swatch-card"
 import {
   Dialog,
   DialogContent,
@@ -321,7 +321,7 @@ export function PaintersPalette() {
                 {tubes.map((t) => (
                   <div key={t.paint.name} className="space-y-1.5">
                     <div className="flex items-baseline gap-2">
-                      <PaintChip hex={t.paint.hex} className="size-3.5 translate-y-0.5" />
+                      <PaintGlob hex={t.paint.hex} name={t.paint.name} className="size-5 translate-y-1" />
                       <span className="truncate text-sm font-medium">{t.paint.name}</span>
                       <span className="ml-auto font-mono text-[11px] text-muted-foreground">
                         {t.paint.pigment}
