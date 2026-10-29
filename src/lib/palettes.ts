@@ -7,7 +7,6 @@ import { PAINT_BY_NAME, type Paint } from "./paints"
  * which is the whole point — and the match badges show what it costs.
  */
 export type PaletteId =
-  | "auto"
   | "zorn"
   | "rembrandt"
   | "primary"
@@ -26,12 +25,6 @@ export type PaletteOption = {
 }
 
 export const PALETTE_OPTIONS: PaletteOption[] = [
-  {
-    id: "auto",
-    name: "For this photo",
-    short: "This photo",
-    note: "Worked out from the photo — the tubes that each buy the most.",
-  },
   {
     id: "zorn",
     name: "Zorn",

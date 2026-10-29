@@ -2,6 +2,9 @@
 
 import * as React from "react"
 import { motion } from "motion/react"
+import { X } from "lucide-react"
+
+import { Button } from "@/components/ui/button"
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
@@ -84,12 +87,15 @@ export function SwatchCard({
   index,
   active,
   onActivate,
+  onRemove,
 }: {
   swatch: Swatch
   recipe: Recipe
   index: number
   active: boolean
   onActivate: (id: number | null) => void
+  /** Given only for a reading taken by hand, which can be taken back. */
+  onRemove?: () => void
 }) {
   // "White 1 + a touch + a touch" reads as equal parts when it is nothing of
   // the kind, so when only one component carries a number, call it the base.
@@ -132,11 +138,27 @@ export function SwatchCard({
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="font-mono text-xs text-muted-foreground">{swatch.hex}</span>
           <Separatorish />
-          <span className="text-xs text-muted-foreground">
-            {(swatch.share * 100).toFixed(swatch.share < 0.01 ? 1 : 0)}% of the canvas
-          </span>
-          <Separatorish />
+          {/* A reading taken by hand covers no measurable share of the canvas. */}
+          {swatch.share > 0 && (
+            <>
+              <span className="text-xs text-muted-foreground">
+                {(swatch.share * 100).toFixed(swatch.share < 0.01 ? 1 : 0)}% of the canvas
+              </span>
+              <Separatorish />
+            </>
+          )}
           <span className="text-xs text-muted-foreground capitalize">{temperature(swatch.lab)}</span>
+          {onRemove && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="ml-auto size-6 text-muted-foreground"
+              aria-label={`Forget ${swatch.hex}`}
+              onClick={onRemove}
+            >
+              <X />
+            </Button>
+          )}
         </div>
 
         <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">

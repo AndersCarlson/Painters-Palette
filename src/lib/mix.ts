@@ -82,20 +82,10 @@ function toRecipe(dabs: Dab[], target: Lab): Recipe {
   }
 }
 
-type Grid = { ratios: number[]; whites: number[]; triples: boolean }
-
 // White carries most of the value range in oil, so its grid is dense up high.
-const FINE: Grid = {
+const FINE = {
   ratios: [0.03, 0.08, 0.15, 0.25, 0.35, 0.5, 0.65, 0.75, 0.85, 0.92, 0.97],
   whites: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.68, 0.76, 0.82, 0.87, 0.91, 0.94, 0.97],
-  triples: true,
-}
-
-/** Used only while choosing which tubes to buy, where the ranking is what matters. */
-const COARSE: Grid = {
-  ratios: [0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 0.95],
-  whites: [0.25, 0.45, 0.62, 0.76, 0.86, 0.93],
-  triples: false,
 }
 
 /** Positive compositions of 6 units across three pigments. */
@@ -237,101 +227,6 @@ export function solve(target: Lab, opts: SolveOptions): Recipe {
   }
 
   return best
-}
-
-/** Closest reachable distance to `target` using only mixes that contain `cand`. */
-function reachWith(
-  target: Lab,
-  cand: Paint,
-  palette: Paint[],
-  white: Paint | null,
-  grid: Grid,
-): number {
-  let best = deltaE(cand.lab, target)
-  const measure = (dabs: Dab[]) => {
-    const d = deltaE(labOfMix(dabs), target)
-    if (d < best) best = d
-  }
-
-  if (white && cand !== white) {
-    for (const f of grid.whites) measure([{ paint: cand, volume: 1 - f }, { paint: white, volume: f }])
-  }
-
-  for (const other of palette) {
-    if (other === cand || other === white) continue
-    for (const r of grid.ratios) {
-      measure([
-        { paint: cand, volume: r },
-        { paint: other, volume: 1 - r },
-      ])
-      if (!white) continue
-      for (const f of grid.whites) {
-        measure([
-          { paint: cand, volume: r * (1 - f) },
-          { paint: other, volume: (1 - r) * (1 - f) },
-          { paint: white, volume: f },
-        ])
-      }
-    }
-  }
-  return best
-}
-
-export type PaletteOptions = {
-  size: number
-  allowWhite: boolean
-  allowBlack: boolean
-}
-
-/**
- * Pick the tubes to squeeze out. A painter does not want the nearest match to
- * each colour taken one at a time — that way lies eleven tubes for seven
- * colours. They want the smallest set that can reach all of them, so this adds
- * tubes one at a time, each time taking whichever one buys the largest drop in
- * total error across the whole picture, weighted by how much canvas each colour
- * covers. It stops early when another tube would not earn its place.
- */
-export function choosePalette(
-  targets: Lab[],
-  weights: number[],
-  opts: PaletteOptions,
-): Paint[] {
-  if (!targets.length) return []
-
-  const pool = PAINTS.filter((p) => {
-    if (p.isWhite) return opts.allowWhite
-    if (p.family === "black") return opts.allowBlack
-    return true
-  })
-  const white = opts.allowWhite ? PAINT_BY_NAME.get("Titanium White")! : null
-  const totalWeight = weights.reduce((s, w) => s + w, 0) || 1
-
-  const palette: Paint[] = white ? [white] : []
-  // Distance still outstanding for each colour with the palette as it stands.
-  const reach = targets.map((t) => (white ? deltaE(white.lab, t) : Infinity))
-
-  while (palette.length < opts.size) {
-    let pick: { paint: Paint; reach: number[]; error: number } | null = null
-
-    for (const cand of pool) {
-      if (palette.includes(cand)) continue
-      const next = targets.map((t, i) =>
-        Math.min(reach[i], reachWith(t, cand, palette, white, COARSE)),
-      )
-      const error = next.reduce((s, d, i) => s + d * weights[i], 0) / totalWeight
-      if (!pick || error < pick.error) pick = { paint: cand, reach: next, error }
-    }
-
-    if (!pick) break
-    const before = reach.reduce((s, d, i) => s + d * weights[i], 0) / totalWeight
-    // A tube that buys less than this is not worth carrying.
-    if (palette.length > 1 && before - pick.error < 0.004) break
-
-    palette.push(pick.paint)
-    for (let i = 0; i < reach.length; i++) reach[i] = pick.reach[i]
-  }
-
-  return palette
 }
 
 export function describeParts(c: Component): string {

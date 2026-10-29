@@ -31,15 +31,17 @@ import {
 } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import { SAMPLES, type Sample } from "@/lib/samples"
+import { oklabToHex } from "@/lib/color"
 import {
   TEMPERATURES,
   VALUE_BANDS,
   extractSwatches,
+  readColourAt,
   temperature,
   valueBand,
   type Swatch,
 } from "@/lib/extract"
-import { choosePalette, describeParts, solve, type Recipe } from "@/lib/mix"
+import { describeParts, solve, type Recipe } from "@/lib/mix"
 import { FAMILY_ORDER, type Paint } from "@/lib/paints"
 import { PALETTE_BY_ID, PALETTE_OPTIONS, paintsOf, type PaletteId } from "@/lib/palettes"
 
@@ -51,18 +53,28 @@ const NO_SWATCHES: Swatch[] = []
 
 /** Identifies a loaded photo without comparing megabytes of data URL. */
 let nextImageId = 0
+/** Well clear of the extracted ids, which start again at 0 on every pass. */
+let nextPickId = 10000
 
 export function PaintersPalette() {
   const [image, setImage] = React.useState<Loaded | null>(null)
   const [count, setCount] = React.useState(7)
   const [maxPaints, setMaxPaints] = React.useState(3)
-  const [paletteId, setPaletteId] = React.useState<PaletteId>("auto")
+  const [paletteId, setPaletteId] = React.useState<PaletteId>("full")
   const [grouping, setGrouping] = React.useState<Grouping>("value")
   const [allowWhite, setAllowWhite] = React.useState(true)
   const [allowBlack, setAllowBlack] = React.useState(false)
-  const [analysis, setAnalysis] = React.useState<{ key: string; swatches: Swatch[] } | null>(null)
+  const [analysis, setAnalysis] = React.useState<{
+    key: string
+    swatches: Swatch[]
+    sample: { data: Uint8ClampedArray; width: number; height: number }
+  } | null>(null)
+  const [picked, setPicked] = React.useState<{ imageId: number; items: Swatch[] }>({
+    imageId: 0,
+    items: [],
+  })
   const [active, setActive] = React.useState<number | null>(null)
-  const [picking, setPicking] = React.useState(false)
+  const [browsing, setBrowsing] = React.useState(false)
   const fileInput = React.useRef<HTMLInputElement>(null)
 
   const load = React.useCallback((src: string, label: string) => {
@@ -95,7 +107,7 @@ export function PaintersPalette() {
 
   const takeSample = React.useCallback(
     (choice: Sample) => {
-      setPicking(false)
+      setBrowsing(false)
       load(choice.src, choice.label)
     },
     [load],
@@ -133,7 +145,13 @@ export function PaintersPalette() {
       const ctx = canvas.getContext("2d", { willReadFrequently: true })!
       ctx.drawImage(img, 0, 0, w, h)
       const { data } = ctx.getImageData(0, 0, w, h)
-      setAnalysis({ key, swatches: extractSwatches(data, w, h, count) })
+      // The same thumbnail answers both questions: which colours the photo is
+      // made of, and what colour sits under a click.
+      setAnalysis({
+        key,
+        swatches: extractSwatches(data, w, h, count),
+        sample: { data, width: w, height: h },
+      })
     }
     img.src = image.src
     return () => {
@@ -141,54 +159,68 @@ export function PaintersPalette() {
     }
   }, [image, count, key])
 
+  // Colours read off the photo by hand, kept beside the ones it was taken
+  // apart into. They belong to the photo they came from and go with it.
+  const pickedItems = image && picked.imageId === image.id ? picked.items : NO_SWATCHES
+
+  const addPick = (nx: number, ny: number) => {
+    if (!image || !analysis || analysis.key !== key) return
+    const { data, width, height } = analysis.sample
+    const lab = readColourAt(data, width, height, nx, ny)
+    setPicked({
+      imageId: image.id,
+      items: [
+        ...pickedItems,
+        { id: ++nextPickId, lab, hex: oklabToHex(lab), share: 0, spot: { x: nx, y: ny } },
+      ],
+    })
+  }
+
+  const dropPick = (id: number) => {
+    if (!image) return
+    setPicked({ imageId: image.id, items: pickedItems.filter((s) => s.id !== id) })
+  }
+
   const preset = PALETTE_BY_ID.get(paletteId)!
-  // A named palette fixes its own tubes. "Full" fixes none and matches each
-  // colour on its own. Everything else is worked out from the photo: the tubes
-  // that each buy the largest drop in error across the whole picture.
-  const palette = React.useMemo(() => {
-    if (paletteId === "full") return undefined
-    const fixed = paintsOf(paletteId)
-    if (fixed) return fixed
-    if (!swatches.length) return undefined
-    return choosePalette(
-      swatches.map((s) => s.lab),
-      swatches.map((s) => s.share),
-      { size: 8, allowWhite, allowBlack },
-    )
-  }, [paletteId, swatches, allowWhite, allowBlack])
+  // A named palette fixes its own tubes; "Full" fixes none and matches each
+  // colour on its own.
+  const palette = React.useMemo(
+    () => (paletteId === "full" ? undefined : paintsOf(paletteId)),
+    [paletteId],
+  )
 
   const recipes = React.useMemo(() => {
     const map = new Map<number, Recipe>()
-    for (const s of swatches) {
+    for (const s of [...swatches, ...pickedItems]) {
       map.set(s.id, solve(s.lab, { maxPaints, allowWhite, allowBlack, palette }))
     }
     return map
-  }, [swatches, maxPaints, allowWhite, allowBlack, palette])
+  }, [swatches, pickedItems, maxPaints, allowWhite, allowBlack, palette])
 
   const tubes = React.useMemo(() => {
-    const used = new Map<string, { paint: Paint; weight: number }>()
-    for (const s of swatches) {
+    const used = new Map<string, { paint: Paint; uses: number }>()
+    for (const s of [...swatches, ...pickedItems]) {
       const recipe = recipes.get(s.id)
       if (!recipe) continue
       for (const c of recipe.components) {
         const hit = used.get(c.paint.name)
-        if (hit) hit.weight += c.volume * s.share
-        else used.set(c.paint.name, { paint: c.paint, weight: c.volume * s.share })
+        if (hit) hit.uses++
+        else used.set(c.paint.name, { paint: c.paint, uses: 1 })
       }
     }
-    // A tube you squeezed out and did not reach for is still on the palette, so
-    // a fixed set lists all of them — the empty bar is the useful part.
+    // A tube you squeezed out and never reached for is still on the palette, so
+    // a fixed set lists all of them — the ones nobody touched are the useful part.
     const list = palette
-      ? palette.map((paint) => ({ paint, weight: used.get(paint.name)?.weight ?? 0 }))
+      ? palette.map((paint) => ({ paint, uses: used.get(paint.name)?.uses ?? 0 }))
       : Array.from(used.values())
     return list.sort(
       (a, b) =>
         FAMILY_ORDER.indexOf(a.paint.family) - FAMILY_ORDER.indexOf(b.paint.family) ||
-        b.weight - a.weight,
+        b.uses - a.uses,
     )
-  }, [swatches, recipes, palette])
+  }, [swatches, pickedItems, recipes, palette])
 
-  const unusedCount = tubes.filter((t) => t.weight === 0).length
+  const unusedCount = tubes.filter((t) => t.uses === 0).length
 
   const groups = React.useMemo(() => {
     const defs =
@@ -203,13 +235,17 @@ export function PaintersPalette() {
   const copyPalette = () => {
     const lines: string[] = [
       `PAINTER'S PALETTE — ${image?.label ?? "photo"}`,
-      `${tubes.length} tube${tubes.length === 1 ? "" : "s"}, ${swatches.length} colour groups`,
+      `${preset.name} — ${tubes.length} tube${tubes.length === 1 ? "" : "s"}`,
       "",
       "ON THE PALETTE",
       ...tubes.map((t) => `  ${t.paint.name} (${t.paint.pigment})`),
       "",
     ]
-    for (const group of groups) {
+    const sections: { label: string; items: Swatch[] }[] = [
+      ...(pickedItems.length ? [{ label: "Picked by hand", items: pickedItems }] : []),
+      ...groups.map((g) => ({ label: g.label, items: g.items })),
+    ]
+    for (const group of sections) {
       lines.push(group.label.toUpperCase())
       for (const s of group.items) {
         const r = recipes.get(s.id)
@@ -217,7 +253,8 @@ export function PaintersPalette() {
         const mix = r.components
           .map((c) => (c.touch ? `a touch of ${c.paint.name}` : `${c.paint.name} ${describeParts(c)}`))
           .join(" + ")
-        lines.push(`  ${s.hex}  ${(s.share * 100).toFixed(0)}%  ${mix}`)
+        const share = s.share > 0 ? `${(s.share * 100).toFixed(0)}%`.padStart(4) : "   —"
+        lines.push(`  ${s.hex}  ${share}  ${mix}`)
       }
       lines.push("")
     }
@@ -237,13 +274,13 @@ export function PaintersPalette() {
         onChange={(e) => takeFile(e.target.files?.[0])}
       />
 
-      <SamplePicker open={picking} onOpenChange={setPicking} onChoose={takeSample} />
+      <SamplePicker open={browsing} onOpenChange={setBrowsing} onChoose={takeSample} />
 
       {!image ? (
         <Dropzone
           onPick={() => fileInput.current?.click()}
           onDrop={takeFile}
-          onBrowseSamples={() => setPicking(true)}
+          onBrowseSamples={() => setBrowsing(true)}
         />
       ) : (
         <div className="grid gap-6 lg:grid-cols-12">
@@ -254,23 +291,39 @@ export function PaintersPalette() {
               <CardHeader>
                 <CardTitle className="truncate">{image.label}</CardTitle>
                 <CardDescription>
-                  {image.width} × {image.height}. Each dot sits where that colour is most typical.
+                  {image.width} × {image.height}. Each dot sits where that colour is most typical —
+                  click anywhere to read the colour there and mix it.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="relative overflow-hidden rounded-lg border">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={image.src} alt={image.label} className="block w-full" />
-                  {swatches.map((s) => (
+                  <img
+                    src={image.src}
+                    alt={`${image.label} — click to read a colour`}
+                    className="block w-full cursor-crosshair"
+                    onClick={(e) => {
+                      const box = e.currentTarget.getBoundingClientRect()
+                      addPick(
+                        (e.clientX - box.left) / box.width,
+                        (e.clientY - box.top) / box.height,
+                      )
+                    }}
+                  />
+                  {/* The markers sit over the photo but beside it in the tree,
+                      so a click on one never reads a colour underneath it. */}
+                  {[...swatches, ...pickedItems].map((s) => (
                     <motion.span
                       key={s.id}
                       aria-hidden
+                      initial={{ scale: 0 }}
                       animate={{ scale: active === s.id ? 1.6 : 1 }}
                       transition={{ type: "spring", stiffness: 420, damping: 26 }}
                       onMouseEnter={() => setActive(s.id)}
                       onMouseLeave={() => setActive(null)}
                       className={cn(
-                        "absolute size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-white/80 shadow-sm",
+                        "absolute -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-white/80 shadow-sm",
+                        s.share > 0 ? "size-3.5" : "size-4 ring-white",
                         active === s.id && "z-10 ring-white",
                       )}
                       style={{
@@ -286,7 +339,7 @@ export function PaintersPalette() {
                   <Button variant="outline" size="sm" onClick={() => fileInput.current?.click()}>
                     <ImageUp /> Another photo
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => setPicking(true)}>
+                  <Button variant="outline" size="sm" onClick={() => setBrowsing(true)}>
                     <Images /> Sample photos
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => setImage(null)}>
@@ -345,7 +398,7 @@ export function PaintersPalette() {
                   <motion.div
                     key={t.paint.name}
                     initial={{ opacity: 0, scale: 0.85 }}
-                    animate={{ opacity: t.weight === 0 ? 0.4 : 1, scale: 1 }}
+                    animate={{ opacity: t.uses === 0 ? 0.4 : 1, scale: 1 }}
                     transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                     className="flex w-24 flex-col items-center gap-2 text-center"
                   >
@@ -357,7 +410,7 @@ export function PaintersPalette() {
                         {t.paint.name}
                       </div>
                       <div className="font-mono text-[10px] text-muted-foreground">
-                        {t.weight === 0 ? "unused" : t.paint.pigment}
+                        {t.uses === 0 ? "unused" : t.paint.pigment}
                       </div>
                     </div>
                   </motion.div>
@@ -375,6 +428,35 @@ export function PaintersPalette() {
               <p className="px-1 text-sm text-muted-foreground">Reading the photo…</p>
             ) : (
               <div className="space-y-6">
+                {pickedItems.length > 0 && (
+                  <section>
+                    <div className="mb-3 flex items-baseline gap-2 px-1">
+                      <h2 className="text-sm font-semibold tracking-tight">Picked by hand</h2>
+                      <Badge variant="secondary" className="text-[11px]">
+                        {pickedItems.length}
+                      </Badge>
+                      <p className="ml-auto hidden text-xs text-muted-foreground sm:block">
+                        Read straight off the photo where you clicked
+                      </p>
+                    </div>
+                    <ul className="space-y-2">
+                      {pickedItems.map((s, i) => {
+                        const recipe = recipes.get(s.id)
+                        return recipe ? (
+                          <SwatchCard
+                            key={s.id}
+                            swatch={s}
+                            recipe={recipe}
+                            index={i}
+                            active={active === s.id}
+                            onActivate={setActive}
+                            onRemove={() => dropPick(s.id)}
+                          />
+                        ) : null
+                      })}
+                    </ul>
+                  </section>
+                )}
                 {groups.map((group) => (
                   <section key={group.key}>
                     <div className="mb-3 flex items-baseline gap-2 px-1">

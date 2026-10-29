@@ -23,17 +23,17 @@ Tinting strength enters as concentration, which is why a touch of phthalo
 carries a whole mixture. The catalogue holds 44 oil paints with their pigment
 indices, opacity and relative strength.
 
-**Choosing the palette.** Matching each colour on its own gives eleven tubes for
-seven colours — a colour picker, not a palette. So you pick a palette first and
-every colour is mixed from it: the **Zorn** four, **the Rembrandt** earths, a
-**three-colour primary** triad, a **limited warm** or **limited cool** set, the
-**full** rack, or one worked out **for this photo** — chosen greedily, by the
-drop in canvas-weighted error each tube buys, and stopping when another would
-not earn its place.
+**Choosing the palette.** You pick a palette first and every colour is mixed
+from it: the **Zorn** four, **the Rembrandt** earths, a **three-colour primary**
+triad, a **limited warm** or **limited cool** set, or the **full** rack.
 
 Every swatch shows the photo colour against the mix, so the cost of the choice
 is visible: the Zorn palette is uncanny on flesh and cannot reach a blue sky,
 and the primary triad does the opposite.
+
+**Picking by hand.** Click anywhere on the photo to read the colour there — a
+small average rather than a single pixel — and it gets a mix of its own from
+whichever palette is selected, alongside the colours found automatically.
 
 ## Running it
 

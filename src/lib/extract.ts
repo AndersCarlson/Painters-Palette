@@ -219,3 +219,41 @@ function merge(clusters: Cluster[]): Cluster[] {
   }
   return out
 }
+
+/**
+ * The colour at one point of the photo, averaged over a few pixels so a single
+ * noisy one cannot decide it — which is what a painter does by eye anyway,
+ * reading the local colour rather than a speck of it. Averaged in linear light,
+ * since that is how the light actually adds up.
+ */
+export function readColourAt(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  nx: number,
+  ny: number,
+  radius = 2,
+): Lab {
+  const cx = Math.min(width - 1, Math.max(0, Math.round(nx * (width - 1))))
+  const cy = Math.min(height - 1, Math.max(0, Math.round(ny * (height - 1))))
+  let r = 0
+  let g = 0
+  let b = 0
+  let n = 0
+
+  for (let y = cy - radius; y <= cy + radius; y++) {
+    if (y < 0 || y >= height) continue
+    for (let x = cx - radius; x <= cx + radius; x++) {
+      if (x < 0 || x >= width) continue
+      const i = (y * width + x) * 4
+      if (data[i + 3] < 128) continue
+      r += srgbToLinear(data[i])
+      g += srgbToLinear(data[i + 1])
+      b += srgbToLinear(data[i + 2])
+      n++
+    }
+  }
+
+  if (!n) return { L: 0, a: 0, b: 0 }
+  return linearToOklab(r / n, g / n, b / n)
+}
