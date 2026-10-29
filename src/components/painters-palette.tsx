@@ -1,0 +1,545 @@
+"use client"
+
+import * as React from "react"
+import { motion } from "motion/react"
+import { Copy, ImageUp, Palette, RotateCcw, Sparkles } from "lucide-react"
+import { toast } from "sonner"
+
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Label } from "@/components/ui/label"
+import { Separator } from "@/components/ui/separator"
+import { Slider } from "@/components/ui/slider"
+import { Switch } from "@/components/ui/switch"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import { PaintChip, SwatchCard } from "@/components/swatch-card"
+import { cn } from "@/lib/utils"
+import { drawDemoScene } from "@/lib/demo-scene"
+import {
+  TEMPERATURES,
+  VALUE_BANDS,
+  extractSwatches,
+  temperature,
+  valueBand,
+  type Swatch,
+} from "@/lib/extract"
+import { choosePalette, describeParts, solve, type Recipe } from "@/lib/mix"
+import { FAMILY_ORDER, type Paint } from "@/lib/paints"
+
+type Grouping = "value" | "temperature"
+type Loaded = { id: number; src: string; width: number; height: number; label: string }
+
+const SAMPLE_WIDTH = 280
+const NO_SWATCHES: Swatch[] = []
+
+/** Identifies a loaded photo without comparing megabytes of data URL. */
+let nextImageId = 0
+
+export function PaintersPalette() {
+  const [image, setImage] = React.useState<Loaded | null>(null)
+  const [count, setCount] = React.useState(7)
+  const [maxPaints, setMaxPaints] = React.useState(3)
+  const [paletteSize, setPaletteSize] = React.useState(8)
+  const [grouping, setGrouping] = React.useState<Grouping>("value")
+  const [allowWhite, setAllowWhite] = React.useState(true)
+  const [allowBlack, setAllowBlack] = React.useState(false)
+  const [analysis, setAnalysis] = React.useState<{ key: string; swatches: Swatch[] } | null>(null)
+  const [active, setActive] = React.useState<number | null>(null)
+  const fileInput = React.useRef<HTMLInputElement>(null)
+
+  const load = React.useCallback((src: string, label: string) => {
+    const img = new Image()
+    img.onload = () =>
+      setImage({
+        id: ++nextImageId,
+        src,
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+        label,
+      })
+    img.onerror = () => toast.error("That file would not open as an image.")
+    img.src = src
+  }, [])
+
+  const takeFile = React.useCallback(
+    (file: File | null | undefined) => {
+      if (!file) return
+      if (!file.type.startsWith("image/")) {
+        toast.error("Pick an image file — JPEG, PNG, WebP or HEIC.")
+        return
+      }
+      const reader = new FileReader()
+      reader.onload = () => load(String(reader.result), file.name)
+      reader.readAsDataURL(file)
+    },
+    [load],
+  )
+
+  const loadDemo = React.useCallback(() => {
+    load(drawDemoScene().toDataURL("image/jpeg", 0.92), "Demo scene")
+  }, [load])
+
+  React.useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith("image/"))
+      if (file) takeFile(file)
+    }
+    window.addEventListener("paste", onPaste)
+    return () => window.removeEventListener("paste", onPaste)
+  }, [takeFile])
+
+  // What the current photo and group count would produce, so the swatches on
+  // screen are always the ones that belong to them — never a stale pass.
+  const key = image ? `${image.id}:${count}` : null
+  const swatches = key && analysis?.key === key ? analysis.swatches : NO_SWATCHES
+  const reading = key !== null && analysis?.key !== key
+
+  // Read the photo down to a thumbnail before clustering: a 280px sample holds
+  // every colour mass that matters and keeps the whole pass under a frame or two.
+  React.useEffect(() => {
+    if (!image || !key) return
+    const img = new Image()
+    let cancelled = false
+    img.onload = () => {
+      if (cancelled) return
+      const scale = Math.min(1, SAMPLE_WIDTH / Math.max(img.naturalWidth, img.naturalHeight))
+      const w = Math.max(1, Math.round(img.naturalWidth * scale))
+      const h = Math.max(1, Math.round(img.naturalHeight * scale))
+      const canvas = document.createElement("canvas")
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext("2d", { willReadFrequently: true })!
+      ctx.drawImage(img, 0, 0, w, h)
+      const { data } = ctx.getImageData(0, 0, w, h)
+      setAnalysis({ key, swatches: extractSwatches(data, w, h, count) })
+    }
+    img.src = image.src
+    return () => {
+      cancelled = true
+    }
+  }, [image, count, key])
+
+  // Choose the tubes once for the whole picture, then mix every colour from
+  // that set. Solving each colour on its own gives a better match and a palette
+  // nobody would lay out.
+  const palette = React.useMemo(
+    () =>
+      paletteSize > 0 && swatches.length
+        ? choosePalette(
+            swatches.map((s) => s.lab),
+            swatches.map((s) => s.share),
+            { size: paletteSize, allowWhite, allowBlack },
+          )
+        : undefined,
+    [swatches, paletteSize, allowWhite, allowBlack],
+  )
+
+  const recipes = React.useMemo(() => {
+    const map = new Map<number, Recipe>()
+    for (const s of swatches) {
+      map.set(s.id, solve(s.lab, { maxPaints, allowWhite, allowBlack, palette }))
+    }
+    return map
+  }, [swatches, maxPaints, allowWhite, allowBlack, palette])
+
+  const tubes = React.useMemo(() => {
+    const used = new Map<string, { paint: Paint; weight: number; uses: number }>()
+    for (const s of swatches) {
+      const recipe = recipes.get(s.id)
+      if (!recipe) continue
+      for (const c of recipe.components) {
+        const hit = used.get(c.paint.name)
+        if (hit) {
+          hit.weight += c.volume * s.share
+          hit.uses++
+        } else {
+          used.set(c.paint.name, { paint: c.paint, weight: c.volume * s.share, uses: 1 })
+        }
+      }
+    }
+    const list = Array.from(used.values())
+    const peak = Math.max(...list.map((t) => t.weight), 1e-6)
+    return list
+      .map((t) => ({ ...t, intensity: t.weight / peak }))
+      .sort(
+        (a, b) =>
+          FAMILY_ORDER.indexOf(a.paint.family) - FAMILY_ORDER.indexOf(b.paint.family) ||
+          b.weight - a.weight,
+      )
+  }, [swatches, recipes])
+
+  const groups = React.useMemo(() => {
+    const defs =
+      grouping === "value"
+        ? VALUE_BANDS.map((b) => ({ ...b, test: (s: Swatch) => valueBand(s.lab) === b.key }))
+        : TEMPERATURES.map((t) => ({ ...t, test: (s: Swatch) => temperature(s.lab) === t.key }))
+    return defs
+      .map((def) => ({ ...def, items: swatches.filter(def.test) }))
+      .filter((g) => g.items.length > 0)
+  }, [swatches, grouping])
+
+  const copyPalette = () => {
+    const lines: string[] = [
+      `PAINTER'S PALETTE — ${image?.label ?? "photo"}`,
+      `${tubes.length} tube${tubes.length === 1 ? "" : "s"}, ${swatches.length} colour groups`,
+      "",
+      "ON THE PALETTE",
+      ...tubes.map((t) => `  ${t.paint.name} (${t.paint.pigment})`),
+      "",
+    ]
+    for (const group of groups) {
+      lines.push(group.label.toUpperCase())
+      for (const s of group.items) {
+        const r = recipes.get(s.id)
+        if (!r) continue
+        const mix = r.components
+          .map((c) => (c.touch ? `a touch of ${c.paint.name}` : `${c.paint.name} ${describeParts(c)}`))
+          .join(" + ")
+        lines.push(`  ${s.hex}  ${(s.share * 100).toFixed(0)}%  ${mix}`)
+      }
+      lines.push("")
+    }
+    navigator.clipboard
+      .writeText(lines.join("\n").trimEnd() + "\n")
+      .then(() => toast.success("Palette and mixes copied"))
+      .catch(() => toast.error("The clipboard refused that one."))
+  }
+
+  return (
+    <TooltipProvider>
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        onChange={(e) => takeFile(e.target.files?.[0])}
+      />
+
+      {!image ? (
+        <Dropzone onPick={() => fileInput.current?.click()} onDrop={takeFile} onDemo={loadDemo} />
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-12">
+          {/* The reference stays in view while the recipes are read beside it, so
+              the whole left column sticks and scrolls within itself. */}
+          <div className="space-y-6 lg:sticky lg:top-18 lg:col-span-5 lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto lg:pb-2">
+            <Card className="overflow-hidden">
+              <CardHeader>
+                <CardTitle className="truncate">{image.label}</CardTitle>
+                <CardDescription>
+                  {image.width} × {image.height}. Each dot sits where that colour is most typical.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="relative overflow-hidden rounded-lg border">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={image.src} alt={image.label} className="block w-full" />
+                  {swatches.map((s) => (
+                    <motion.span
+                      key={s.id}
+                      aria-hidden
+                      animate={{ scale: active === s.id ? 1.6 : 1 }}
+                      transition={{ type: "spring", stiffness: 420, damping: 26 }}
+                      onMouseEnter={() => setActive(s.id)}
+                      onMouseLeave={() => setActive(null)}
+                      className={cn(
+                        "absolute size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-white/80 shadow-sm",
+                        active === s.id && "z-10 ring-white",
+                      )}
+                      style={{
+                        background: s.hex,
+                        left: `${s.spot.x * 100}%`,
+                        top: `${s.spot.y * 100}%`,
+                      }}
+                    />
+                  ))}
+                </div>
+
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => fileInput.current?.click()}>
+                    <ImageUp /> Another photo
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setImage(null)}>
+                    <RotateCcw /> Start over
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Controls
+              found={swatches.length}
+              count={count}
+              setCount={setCount}
+              paletteSize={paletteSize}
+              setPaletteSize={setPaletteSize}
+              maxPaints={maxPaints}
+              setMaxPaints={setMaxPaints}
+              grouping={grouping}
+              setGrouping={setGrouping}
+              allowWhite={allowWhite}
+              setAllowWhite={setAllowWhite}
+              allowBlack={allowBlack}
+              setAllowBlack={setAllowBlack}
+            />
+          </div>
+
+          <div className="space-y-6 lg:col-span-7">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Palette className="size-4 text-muted-foreground" />
+                  On the palette
+                </CardTitle>
+                <CardDescription>
+                  {tubes.length === 1 ? "One tube mixes" : `${tubes.length} tubes mix`} every colour
+                  below. The bar is how much of the picture each one ends up carrying.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                {tubes.map((t) => (
+                  <div key={t.paint.name} className="space-y-1.5">
+                    <div className="flex items-baseline gap-2">
+                      <PaintChip hex={t.paint.hex} className="size-3.5 translate-y-0.5" />
+                      <span className="truncate text-sm font-medium">{t.paint.name}</span>
+                      <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+                        {t.paint.pigment}
+                      </span>
+                    </div>
+                    <div className="h-1 overflow-hidden rounded-full bg-muted">
+                      <motion.div
+                        className="h-full rounded-full"
+                        style={{ background: t.paint.hex }}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${Math.max(4, t.intensity * 100)}%` }}
+                        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            {reading ? (
+              <p className="px-1 text-sm text-muted-foreground">Reading the photo…</p>
+            ) : (
+              <div className="space-y-6">
+                {groups.map((group) => (
+                  <section key={group.key}>
+                    <div className="mb-3 flex items-baseline gap-2 px-1">
+                      <h2 className="text-sm font-semibold tracking-tight">{group.label}</h2>
+                      <Badge variant="secondary" className="text-[11px]">
+                        {group.items.length}
+                      </Badge>
+                      <p className="ml-auto hidden text-xs text-muted-foreground sm:block">
+                        {group.blurb}
+                      </p>
+                    </div>
+                    <ul className="space-y-2">
+                      {group.items.map((s, i) => {
+                        const recipe = recipes.get(s.id)
+                        return recipe ? (
+                          <SwatchCard
+                            key={s.id}
+                            swatch={s}
+                            recipe={recipe}
+                            index={i}
+                            active={active === s.id}
+                            onActivate={setActive}
+                          />
+                        ) : null
+                      })}
+                    </ul>
+                  </section>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <Button variant="outline" onClick={copyPalette}>
+                <Copy /> Copy palette and mixes
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </TooltipProvider>
+  )
+}
+
+function Dropzone({
+  onPick,
+  onDrop,
+  onDemo,
+}: {
+  onPick: () => void
+  onDrop: (file: File | undefined) => void
+  onDemo: () => void
+}) {
+  const [over, setOver] = React.useState(false)
+
+  return (
+    <div
+      onDragOver={(e) => {
+        e.preventDefault()
+        setOver(true)
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setOver(false)
+        onDrop(Array.from(e.dataTransfer.files).find((f) => f.type.startsWith("image/")))
+      }}
+      className={cn(
+        "mx-auto flex max-w-2xl flex-col items-center gap-5 rounded-2xl border-2 border-dashed px-8 py-20 text-center transition-colors",
+        over ? "border-ring bg-accent/40" : "border-border",
+      )}
+    >
+      <div className="rounded-full border bg-card p-3 shadow-xs">
+        <ImageUp className="size-5 text-muted-foreground" />
+      </div>
+      <div className="space-y-1.5">
+        <h2 className="text-lg font-semibold tracking-tight">Drop a photo in</h2>
+        <p className="text-sm text-muted-foreground">
+          Or paste one from the clipboard. Nothing leaves the browser — the photo is read on this
+          machine and never uploaded.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <Button onClick={onPick}>
+          <ImageUp /> Choose a photo
+        </Button>
+        <Button variant="outline" onClick={onDemo}>
+          <Sparkles /> Try a demo scene
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function Controls(props: {
+  found: number
+  count: number
+  setCount: (n: number) => void
+  paletteSize: number
+  setPaletteSize: (n: number) => void
+  maxPaints: number
+  setMaxPaints: (n: number) => void
+  grouping: Grouping
+  setGrouping: (g: Grouping) => void
+  allowWhite: boolean
+  setAllowWhite: (b: boolean) => void
+  allowBlack: boolean
+  setAllowBlack: (b: boolean) => void
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>How to read it</CardTitle>
+        <CardDescription>Set the palette the way you would actually lay it out.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="space-y-3">
+          <div className="flex items-baseline justify-between">
+            <Label htmlFor="count">Colour groups</Label>
+            <span className="font-mono text-sm text-muted-foreground">{props.count}</span>
+          </div>
+          <Slider
+            id="count"
+            min={3}
+            max={14}
+            step={1}
+            value={props.count}
+            onValueChange={(v) => props.setCount(Array.isArray(v) ? v[0] : v)}
+          />
+          <p className="text-xs text-muted-foreground">
+            {props.found > 0 && props.found < props.count
+              ? `This photo only holds ${props.found} colours you could tell apart, so the rest were folded in.`
+              : "Fewer groups force bigger decisions. Six or seven is a normal day's palette."}
+          </p>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-2.5">
+          <Label>Palette limit</Label>
+          <ToggleGroup
+            variant="outline"
+            spacing={0}
+            value={[String(props.paletteSize)]}
+            onValueChange={(v) => v[0] && props.setPaletteSize(Number(v[0]))}
+          >
+            {[6, 8, 12, 0].map((n) => (
+              <ToggleGroupItem key={n} value={String(n)}>
+                {n === 0 ? "No limit" : n}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          <p className="text-xs text-muted-foreground">
+            Every colour gets mixed from one shared set, and it stops short of the limit when
+            another tube would not earn its place. No limit matches each colour on its own, which is
+            closer and a much longer shopping list.
+          </p>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-2.5">
+          <Label>Tubes per mix</Label>
+          <ToggleGroup
+            variant="outline"
+            spacing={0}
+            value={[String(props.maxPaints)]}
+            onValueChange={(v) => v[0] && props.setMaxPaints(Number(v[0]))}
+          >
+            {[1, 2, 3, 4].map((n) => (
+              <ToggleGroupItem key={n} value={String(n)}>
+                {n === 1 ? "Straight" : n}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          <p className="text-xs text-muted-foreground">
+            More tubes get closer; three is about where a mix stays clean.
+          </p>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-2.5">
+          <Label>Group by</Label>
+          <ToggleGroup
+            variant="outline"
+            spacing={0}
+            value={[props.grouping]}
+            onValueChange={(v) => v[0] && props.setGrouping(v[0] as Grouping)}
+          >
+            <ToggleGroupItem value="value">Value</ToggleGroupItem>
+            <ToggleGroupItem value="temperature">Temperature</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor="white" className="font-normal">
+              Tint with Titanium White
+            </Label>
+            <Switch id="white" checked={props.allowWhite} onCheckedChange={props.setAllowWhite} />
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label htmlFor="black" className="font-normal">
+                Allow blacks and greys
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Off by default — darks mixed from colour stay alive.
+              </p>
+            </div>
+            <Switch id="black" checked={props.allowBlack} onCheckedChange={props.setAllowBlack} />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
