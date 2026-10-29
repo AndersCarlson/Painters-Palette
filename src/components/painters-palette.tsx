@@ -2,14 +2,13 @@
 
 import * as React from "react"
 import { motion } from "motion/react"
-import { Copy, ImageUp, Images, Palette, RotateCcw } from "lucide-react"
+import { Copy, ImageUp, Images, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardFooter,
@@ -17,13 +16,6 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
@@ -49,13 +41,7 @@ import {
 } from "@/lib/extract"
 import { choosePalette, describeParts, solve, type Recipe } from "@/lib/mix"
 import { FAMILY_ORDER, type Paint } from "@/lib/paints"
-import {
-  PALETTE_BY_ID,
-  PALETTE_LABELS,
-  PALETTE_OPTIONS,
-  paintsOf,
-  type PaletteId,
-} from "@/lib/palettes"
+import { PALETTE_BY_ID, PALETTE_OPTIONS, paintsOf, type PaletteId } from "@/lib/palettes"
 
 type Grouping = "value" | "temperature"
 type Loaded = { id: number; src: string; width: number; height: number; label: string }
@@ -330,29 +316,29 @@ export function PaintersPalette() {
 
           <div className="space-y-6 lg:col-span-7">
             <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Palette className="size-4 text-muted-foreground" />
-                  On the palette
-                </CardTitle>
-                <CardAction>
-                  <Select
-                    items={PALETTE_LABELS}
-                    value={paletteId}
-                    onValueChange={(v) => setPaletteId(v as PaletteId)}
+              <CardHeader className="gap-2.5">
+                {/* Seven segments do not fit a phone, so the control scrolls
+                    sideways rather than wrapping and breaking its joined edges. */}
+                <div className="-mx-0.5 overflow-x-auto px-0.5 py-0.5">
+                  <ToggleGroup
+                    variant="outline"
+                    spacing={0}
+                    aria-label="Palette"
+                    className="w-max min-w-full"
+                    value={[paletteId]}
+                    onValueChange={(v) => v[0] && setPaletteId(v[0] as PaletteId)}
                   >
-                    <SelectTrigger aria-label="Palette">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PALETTE_OPTIONS.map((option) => (
-                        <SelectItem key={option.id} value={option.id}>
-                          {option.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </CardAction>
+                    {PALETTE_OPTIONS.map((option) => (
+                      <ToggleGroupItem
+                        key={option.id}
+                        value={option.id}
+                        className="grow whitespace-nowrap"
+                      >
+                        {option.short}
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
+                </div>
                 <CardDescription>{preset.note}</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
